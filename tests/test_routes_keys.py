@@ -802,6 +802,120 @@ async def test_update_key_rejects_prefix_only_alias_bypass(app):
     assert "alphanumeric" in r.json()["detail"].lower()
 
 
+@pytest.mark.parametrize(
+    "duration",
+    [
+        "1 day",
+        "1 d",
+        "1day",
+        "30 days",
+        "1y",
+        "1w",
+        "0d",
+        "0s",
+        "-1d",
+        "1.5d",
+        "d",
+        "30",
+        "30D",
+        "1MO",
+        "thirty days",
+        "30d ",
+        " 30d",
+        "1 mo",
+    ],
+)
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_key_rejects_invalid_duration(app, duration):
+    """Invalid duration formats are rejected before any upstream call."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.post(
+            "/api/keys",
+            json={"name": "DurKey", "duration": duration},
+            headers=AUTH,
+        )
+
+    assert r.status_code == 400, f"expected 400 for duration={duration!r}"
+    assert "duration" in r.json()["detail"].lower()
+    assert len(respx.calls) == 0
+
+
+@pytest.mark.parametrize(
+    "duration",
+    ["30s", "30m", "30h", "30d", "1mo", "1d", "1s", "12mo", "365d"],
+)
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_key_accepts_valid_duration(app, duration):
+    """All documented LiteLLM duration units are accepted."""
+    mock_ensure_user()
+    generate_route = respx.post(f"{LITELLM}/key/generate").mock(
+        return_value=Response(200, json={
+            "key": "sk-test1234567890abcdef1234567890abcdef1234567890ab",
+            "token_id": "tok_dur",
+            "key_alias": "DurKey",
+            "user_id": "alice@example.com",
+            "created_at": "2026-03-09T00:00:00Z",
+        })
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.post(
+            "/api/keys",
+            json={"name": "DurKey", "duration": duration},
+            headers=AUTH,
+        )
+
+    assert r.status_code == 201, f"expected 201 for duration={duration!r}"
+    import json
+    sent = json.loads(generate_route.calls[0].request.content)
+    assert sent["duration"] == duration
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_update_key_rejects_invalid_duration(app):
+    """PATCH endpoint validates the duration field too."""
+    respx.get(f"{LITELLM}/key/info").mock(
+        return_value=Response(200, json={
+            "token_id": "tok_abc123",
+            "token": "sk-abc123fullkey",
+            "key_alias": "alice@example.com-Original",
+            "user_id": "alice@example.com",
+            "blocked": False,
+        })
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.patch(
+            "/api/keys/tok_abc123",
+            json={"duration": "1 year"},
+            headers=AUTH,
+        )
+
+    assert r.status_code == 400
+    assert "duration" in r.json()["detail"].lower()
+
+
+def test_validate_duration_helper():
+    from app.routes.keys import _validate_duration
+    from fastapi import HTTPException
+
+    # Valid durations don't raise.
+    for v in ["1s", "30s", "30m", "30h", "30d", "1mo", "12mo"]:
+        _validate_duration(v)
+
+    # Invalid durations raise HTTP 400.
+    for v in ["1 day", "1y", "1w", "0d", "0s", "30D", "thirty", "", "d", "1.5d"]:
+        try:
+            _validate_duration(v)
+        except HTTPException as exc:
+            assert exc.status_code == 400
+        else:
+            raise AssertionError(f"expected HTTPException for {v!r}")
+
+
 def test_sanitize_key_name_helper():
     from app.routes.keys import _sanitize_key_name
 

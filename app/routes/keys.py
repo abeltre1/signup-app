@@ -114,6 +114,28 @@ def _is_expired(expires: str | None) -> bool:
 _NAME_SANITIZE_RE = re.compile(r"[^A-Za-z0-9-]+")
 _COLLAPSE_DASH_RE = re.compile(r"-+")
 
+# LiteLLM duration format: a positive integer followed by a unit suffix.
+# Supported units (per LiteLLM docs): s, m, h, d, mo. No spaces, no spelled-
+# out words ("1 day"), no unsupported units (w, y).
+_DURATION_RE = re.compile(r"^(\d+)(s|m|h|d|mo)$")
+_DURATION_HELP = (
+    "Invalid duration. Use a positive integer followed by a unit: "
+    "s (seconds), m (minutes), h (hours), d (days), or mo (months). "
+    "Example: 30d, 1mo."
+)
+
+
+def _validate_duration(value: str) -> None:
+    """Reject duration strings LiteLLM won't accept.
+
+    Internal callers that pass system-generated durations (e.g. the soft
+    delete that uses ``"0s"``) bypass this by calling the LiteLLM client
+    directly; this guard only runs on user-supplied values.
+    """
+    match = _DURATION_RE.fullmatch(value)
+    if not match or int(match.group(1)) <= 0:
+        raise HTTPException(status_code=400, detail=_DURATION_HELP)
+
 
 def _sanitize_key_name(name: str) -> str:
     """Restrict a user-supplied key name to alphanumeric characters and dashes.
@@ -222,6 +244,9 @@ async def create_key(body: CreateKeyRequest, request: Request):
             status_code=400,
             detail="Name must contain at least one alphanumeric character",
         )
+
+    if body.duration:
+        _validate_duration(body.duration)
 
     # Validate required metadata fields
     required = settings.required_metadata_fields
@@ -368,6 +393,7 @@ async def update_key(token: str, body: UpdateKeyRequest, request: Request):
     if body.tpm_limit is not None:
         kwargs["tpm_limit"] = body.tpm_limit
     if body.duration is not None:
+        _validate_duration(body.duration)
         kwargs["duration"] = body.duration
         # Update metadata so we keep the duration visible in the UI
         existing_meta = info.get("metadata") or {}

@@ -94,6 +94,21 @@ function prettyLabel(field) {
     return field.replace(/_/g, " ").replace(/\b\w/g, function(c) { return c.toUpperCase(); });
 }
 
+// LiteLLM duration format: positive integer followed by a unit suffix.
+// Supported units: s (seconds), m (minutes), h (hours), d (days), mo (months).
+// Mirrors the server-side regex in app/routes/keys.py so invalid input is
+// rejected before we make a network round-trip.
+var DURATION_RE = /^(\d+)(s|m|h|d|mo)$/;
+var DURATION_HELP = "Invalid duration. Use a positive integer followed by " +
+    "s, m, h, d, or mo (e.g. 30d, 1mo).";
+
+function validateDuration(value) {
+    if (!value) return null;
+    var m = DURATION_RE.exec(value);
+    if (!m || parseInt(m[1], 10) <= 0) return DURATION_HELP;
+    return null;
+}
+
 function showToast(message, type) {
     var container = document.getElementById("toast-container");
     if (!container) return;
@@ -278,8 +293,18 @@ async function createKey() {
 
     var body = {name: name};
 
-    var duration = document.getElementById("key-duration").value.trim();
-    if (duration) body.duration = duration;
+    var durationEl = document.getElementById("key-duration");
+    var duration = durationEl.value.trim();
+    if (duration) {
+        var durationError = validateDuration(duration);
+        if (durationError) {
+            showCreateError(durationError);
+            durationEl.focus();
+            durationEl.select();
+            return;
+        }
+        body.duration = duration;
+    }
 
     var budget = document.getElementById("key-budget").value.trim();
     if (budget) body.max_budget = parseFloat(budget);
