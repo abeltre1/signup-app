@@ -371,6 +371,11 @@ async def update_key(token: str, body: UpdateKeyRequest, request: Request):
     client = _get_client()
     user_email = request.state.user_email
 
+    # Validate purely-local fields before the upstream ownership check so
+    # we don't pay an extra round-trip on bad input.
+    if body.duration is not None:
+        _validate_duration(body.duration)
+
     info = await _verify_key_ownership(client, token, user_email)
 
     kwargs = {}
@@ -393,7 +398,6 @@ async def update_key(token: str, body: UpdateKeyRequest, request: Request):
     if body.tpm_limit is not None:
         kwargs["tpm_limit"] = body.tpm_limit
     if body.duration is not None:
-        _validate_duration(body.duration)
         kwargs["duration"] = body.duration
         # Update metadata so we keep the duration visible in the UI
         existing_meta = info.get("metadata") or {}

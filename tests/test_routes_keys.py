@@ -854,7 +854,7 @@ async def test_create_key_accepts_valid_duration(app, duration):
         return_value=Response(200, json={
             "key": "sk-test1234567890abcdef1234567890abcdef1234567890ab",
             "token_id": "tok_dur",
-            "key_alias": "DurKey",
+            "key_alias": "alice@example.com-DurKey",
             "user_id": "alice@example.com",
             "created_at": "2026-03-09T00:00:00Z",
         })
@@ -876,17 +876,7 @@ async def test_create_key_accepts_valid_duration(app, duration):
 @pytest.mark.asyncio
 @respx.mock
 async def test_update_key_rejects_invalid_duration(app):
-    """PATCH endpoint validates the duration field too."""
-    respx.get(f"{LITELLM}/key/info").mock(
-        return_value=Response(200, json={
-            "token_id": "tok_abc123",
-            "token": "sk-abc123fullkey",
-            "key_alias": "alice@example.com-Original",
-            "user_id": "alice@example.com",
-            "blocked": False,
-        })
-    )
-
+    """PATCH rejects invalid duration before any upstream call."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.patch(
             "/api/keys/tok_abc123",
@@ -896,6 +886,8 @@ async def test_update_key_rejects_invalid_duration(app):
 
     assert r.status_code == 400
     assert "duration" in r.json()["detail"].lower()
+    # Pure-input validation must not contact LiteLLM (no /key/info, etc.).
+    assert len(respx.calls) == 0
 
 
 def test_validate_duration_helper():
